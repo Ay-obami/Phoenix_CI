@@ -71,6 +71,8 @@
 
   <div class="card">
     <h2>1 · Submit a pull request</h2>
+    <label>API token (required in real-agent mode; kept only in this page)</label>
+    <input id="apiToken" type="password" autocomplete="off" placeholder="SWARM_API_TOKEN">
     <label>Quick pick — a bundled demo PR (fills everything below)</label>
     <select id="preset" onchange="applyPreset()">
       <option value="">— choose a demo PR —</option>
@@ -309,26 +311,39 @@ async function submitTask() {
     body.pr_url = prLink;
   }
 
-  $('submitBtn').disabled = true; $('killBtn').disabled = false;
+  $('submitBtn').disabled = true;
   $('feed').innerHTML = ''; heartbeats = 0; $('hbCount').textContent = '0';
-
-  const res = await fetch('/tasks', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(body),
-  });
-  const json = await res.json();
-  currentTask = json.task_id;
-  $('taskIdLine').textContent = 'task ' + currentTask +
-    (prLink ? `  ·  ${prLink}` : '');
-  setStatus('submitted…');
+  try {
+    const res = await fetch('/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...writeAuthHeaders() },
+      body: JSON.stringify(body),
+    });
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`);
+    currentTask = json.task_id;
+    $('killBtn').disabled = false;
+    $('taskIdLine').textContent = 'task ' + currentTask +
+      (prLink ? `  ·  ${prLink}` : '');
+    setStatus('submitted…');
+  } catch (error) {
+    setStatus('submission failed');
+    addFeed(`Submission failed: ${error.message}`, 'bad');
+  } finally {
+    $('submitBtn').disabled = false;
+  }
 }
 
+function writeAuthHeaders() {
+  const token = $('apiToken').value.trim();
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
 
 async function killTask() {
   if (!currentTask) return;
-  const res = await fetch(`/tasks/${currentTask}/kill`, { method: 'POST' });
+  const res = await fetch(`/tasks/${currentTask}/kill`, { method: 'POST', headers: writeAuthHeaders() });
   const json = await res.json();
+  if (!res.ok) { addFeed(`Kill request failed: ${json.error || `HTTP ${res.status}`}`, 'bad'); return; }
   addFeed(json.killed
     ? '⚡ KILL signal sent to the worker mid-task — supervisor should notice within ~1.5 s'
     : 'no live worker to kill right now', 'hl');

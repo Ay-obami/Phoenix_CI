@@ -9,6 +9,14 @@ use swarm_core::task::TaskSpec;
 
 use crate::AgentError;
 
+/// Keep the control-plane write token out of every subprocess, including
+/// Cargo tests and git hooks in submitted repositories. This is not sandboxing.
+pub fn child_command(program: &str) -> Command {
+    let mut command = Command::new(program);
+    command.env_remove("SWARM_API_TOKEN");
+    command
+}
+
 /// Where a task's working copy comes from.
 #[derive(Debug, Clone)]
 pub enum SandboxSource {
@@ -68,7 +76,7 @@ pub fn resolve_push_branch(url: &str, fetch_ref: &str) -> Option<String> {
         .and_then(|s| s.strip_suffix("/head"))
     {
         let repo = filesystem_repo(url);
-        let out = Command::new("gh")
+        let out = child_command("gh")
             .args(["pr", "view", n, "--repo", &repo, "--json", "headRefName"])
             .output()
             .ok()?;
@@ -104,7 +112,7 @@ pub fn publish_fix(
     commit_msg: &str,
 ) -> Result<(), AgentError> {
     // Nothing to do if the fix didn't change anything.
-    let status = Command::new("git")
+    let status = child_command("git")
         .args(["status", "--porcelain"])
         .current_dir(dest)
         .output()?;
@@ -120,7 +128,7 @@ pub fn publish_fix(
         "-m", commit_msg,
     ])?;
     let refspec = format!("HEAD:refs/heads/{branch}");
-    let push = Command::new("git")
+    let push = child_command("git")
         .args(["push", url, &refspec])
         .current_dir(dest)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -156,7 +164,7 @@ fn git_checkout(url: &str, fetch_ref: &str, dest: &Path) -> Result<(), AgentErro
 }
 
 fn run(cwd: &Path, args: &[&str]) -> Result<(), AgentError> {
-    let out = Command::new("git").args(args).current_dir(cwd).output()?;
+    let out = child_command("git").args(args).current_dir(cwd).output()?;
     if out.status.success() {
         Ok(())
     } else {
@@ -186,6 +194,14 @@ fn copy_dir(src: &Path, dst: &Path) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn child_processes_do_not_inherit_the_api_write_token() {
+        let command = child_command("cargo");
+        assert!(command.get_envs().any(|(key, value)|
+            key == std::ffi::OsStr::new("SWARM_API_TOKEN") && value.is_none()
+        ));
+    }
 
     #[test]
     fn parses_github_pr_urls() {

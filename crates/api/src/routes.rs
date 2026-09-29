@@ -4,7 +4,7 @@
 use std::convert::Infallible;
 
 use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::sse::{Event, KeepAlive, Sse};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -82,9 +82,8 @@ pub fn router(state: AppState) -> Router {
         .route("/tasks/:id/kill", post(kill_task))
         .route("/events", get(events))
         .layer(
-            // Demo/dev CORS: the dashboard may be served from a different
-            // origin (Vite dev server) than the API. Permissive is fine for
-            // a hackathon project with no auth/cookies in play.
+            // Demo/dev CORS: the dashboard may be served from another origin.
+            // Real-agent writes require a bearer token even when CORS permits a request.
             CorsLayer::new()
                 .allow_origin(Any)
                 .allow_methods(Any)
@@ -105,11 +104,32 @@ async fn index() -> axum::response::Html<&'static str> {
 }
 
 
-async fn submit_task(State(st): State<AppState>, Json(spec): Json<TaskSpec>) -> Json<serde_json::Value> {
+fn authorize_write(st: &AppState, headers: &HeaderMap) -> Result<(), (StatusCode, Json<serde_json::Value>)> {
+    let Some(expected) = st.submit_token.as_deref() else { return Ok(()); };
+    let supplied = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.strip_prefix("Bearer "))
+        .unwrap_or("");
+    let provided = supplied.as_bytes();
+    let required = expected.as_bytes();
+    let valid = provided.len() == required.len()
+        && required.iter().zip(provided).fold(0u8, |diff, (a, b)| diff | (a ^ b)) == 0;
+    if valid { Ok(()) } else {
+        Err((StatusCode::UNAUTHORIZED, Json(serde_json::json!({ "error": "valid API token required" }))))
+    }
+}
+
+async fn submit_task(
+    State(st): State<AppState>,
+    headers: HeaderMap,
+    Json(spec): Json<TaskSpec>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    authorize_write(&st, &headers)?;
     let id = st.supervisor.submit_pr(spec.clone());
     st.tasks.lock().unwrap().insert(id, spec);
     tracing::info!(task_id=%id, "task submitted via API");
-    Json(serde_json::json!({ "task_id": id.to_string() }))
+    Ok(Json(serde_json::json!({ "task_id": id.to_string() })))
 }
 
 async fn list_tasks(State(st): State<AppState>) -> Json<serde_json::Value> {
@@ -161,8 +181,10 @@ async fn get_task(
 /// expiry does the visible recovery.
 async fn kill_task(
     State(st): State<AppState>,
+    headers: HeaderMap,
     Path(id): Path<String>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    authorize_write(&st, &headers)?;
     let task_id = parse_id(&id)?;
     if st.supervisor.snapshot(task_id).is_none() {
         return Err((

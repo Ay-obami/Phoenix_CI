@@ -68,6 +68,7 @@ sleep 6    && curl -s localhost:3000/tasks/$TID            # reassigned + merged
 | `ANTHROPIC_BASE_URL`| no      | `https://api.anthropic.com`    | Override for proxies/local gateways        |
 | `SWARM_BIND`       | no       | `127.0.0.1:3000`               | API listen address                         |
 | `SWARM_ALLOW_UNSANDBOXED_AGENT` | yes for a real LLM provider | — | Exact value `I_UNDERSTAND_HOST_EXECUTION` permits the experimental host runner |
+| `SWARM_API_TOKEN` | yes for a real LLM provider | — | At least 32 non-whitespace characters; bearer token for task submit and kill writes |
 | `SWARM_HEARTBEAT_MS`| no      | `500`                          | Worker heartbeat interval                  |
 | `SWARM_LEASE_TIMEOUT_MS`| no  | `1500`                         | Lease expiry (≈3 missed heartbeats)        |
 | `SWARM_REAP_INTERVAL_MS`| no  | `250`                          | Supervisor lease-reaper scan cadence       |
@@ -92,13 +93,18 @@ on the host, and can use the host's GitHub credentials to push fixes and merge
 PRs. The per-attempt directory is a working copy, not a security sandbox.
 Simulated reports can open the demo gate, but the GitHub publisher is disabled
 in mock mode, so they cannot trigger a real PR merge.
-Real-agent mode now refuses to start unless an operator explicitly sets
-`SWARM_ALLOW_UNSANDBOXED_AGENT=I_UNDERSTAND_HOST_EXECUTION`. The API listens
-on loopback by default. Neither setting isolates untrusted code or adds API
-authentication; use this mode only on a disposable development machine with
-test credentials. A contained worker, resource limits, network restrictions,
-credential separation, authenticated intake and cancellation of child
-processes are required before hosting it for others.
+Real-agent mode refuses to start unless an operator explicitly sets
+`SWARM_ALLOW_UNSANDBOXED_AGENT=I_UNDERSTAND_HOST_EXECUTION` and a long
+`SWARM_API_TOKEN` (generate one with `openssl rand -hex 32`). Task submission
+and worker-kill writes require `Authorization: Bearer <token>`; child Cargo,
+git and gh processes do not inherit this token. The dashboard
+accepts it in a password field without persisting it. Read-only task snapshots,
+the event stream and presets remain unauthenticated. The API listens on
+loopback by default. These controls do not isolate untrusted code; use real
+mode only on a disposable development machine with test credentials. A
+contained worker, resource limits, network restrictions, credential
+separation, full read authorization and cancellation of child processes are
+required before hosting it for others.
 
 ## Solving real pull requests
 

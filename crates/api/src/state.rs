@@ -19,5 +19,6 @@ pub struct AppState {
     pub tasks: TaskRegistry,
     /// Demo fault-injection registry (join handles per worker generation).
     pub spawner: Arc<DemoSpawner>,
+    /// None only for the simulated local demo. Real-agent writes require this token.
+    pub submit_token: Option<Arc<str>>,
 }
-
