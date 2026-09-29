@@ -125,30 +125,16 @@ impl ImplementerAgent {
             }
         }
 
-        // 5. THE ONLY source of truth for pass/fail: real cargo test, timed,
-        //    and run OFF the async thread (blocking process wait must not
-        //    starve the heartbeat timer either).
-        let output = {
-            let sandbox = sandbox.clone();
-            tokio::task::spawn_blocking(move || {
-                let _span = tracing::info_span!("cargo_test").entered();
-                let started_at = std::time::Instant::now();
-
-                let out = workspace::child_command("cargo")
-                    .args(["test", "--quiet"])
-                    .current_dir(&sandbox)
-                    .output()
-                    .map_err(AgentError::from)?;
-                tracing::info!(
-                    duration_ms = started_at.elapsed().as_millis() as u64,
-                    passed = out.status.success(),
-                    "cargo test finished"
-                );
-                Ok::<_, AgentError>(out)
-            })
-            .await
-            .map_err(|e| AgentError::Git(format!("cargo join error: {e}")))??
-        };
+        // 5. Genuine Cargo exit status remains the test gate's source of truth.
+        let started_at = std::time::Instant::now();
+        let mut command = workspace::child_command("cargo");
+        command.args(["test", "--quiet"]).current_dir(&sandbox);
+        let output = crate::process::output(command, std::time::Duration::from_secs(120)).await?;
+        tracing::info!(
+            duration_ms = started_at.elapsed().as_millis() as u64,
+            passed = output.status.success(),
+            "cargo test finished"
+        );
 
 
         let passed = output.status.success();

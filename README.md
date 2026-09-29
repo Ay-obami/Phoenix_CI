@@ -88,6 +88,14 @@ environment variables.
 
 ### Host execution boundary
 
+Cargo test execution uses an async Unix process-group runner with a fixed
+120-second deadline. Cancelling the worker, reaching the deadline, or completing
+the command kills any processes still in that group. Real test execution fails
+closed on platforms without Unix process-group support. Clone/preparation and
+publishing still use blocking calls and do not yet share this cancellation
+boundary. A process can deliberately leave the group; this is not host isolation.
+
+
 The current real-agent worker clones submitted repositories, runs `cargo test`
 on the host, and can use the host's GitHub credentials to push fixes and merge
 PRs. The per-attempt directory is a working copy, not a security sandbox.

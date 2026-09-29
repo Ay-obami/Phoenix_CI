@@ -9,6 +9,7 @@
 pub mod implementer;
 pub mod llm;
 pub mod plan;
+mod process;
 pub mod workspace;
 
 pub use implementer::ImplementerAgent;
