@@ -1018,6 +1018,7 @@ name = "swarm-agents"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "libc",
  "reqwest",
  "serde",
  "serde_json",

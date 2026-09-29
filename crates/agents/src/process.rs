@@ -2,10 +2,45 @@
 use std::process::{Command, Output};
 use std::time::Duration;
 
-pub(crate) async fn output(mut command: Command, _limit: Duration) -> std::io::Result<Output> {
-    tokio::task::spawn_blocking(move || command.output())
+/// Run a test command in its own Unix process group. The group guard follows
+/// this future, so cancellation or timeout stops ordinary build/test children.
+/// This is lifetime management, not isolation: hostile code can leave the group.
+#[cfg(unix)]
+pub(crate) async fn output(mut command: Command, limit: Duration) -> std::io::Result<Output> {
+    use std::os::unix::process::CommandExt;
+    use std::process::Stdio;
+
+    command.process_group(0);
+    command.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut command = tokio::process::Command::from(command);
+    command.kill_on_drop(true);
+    let child = command.spawn()?;
+    let pid = child.id().expect("newly spawned child has a process ID");
+    let _group = ProcessGroup(pid as libc::pid_t);
+    tokio::time::timeout(limit, child.wait_with_output())
         .await
-        .map_err(std::io::Error::other)?
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::TimedOut, "Cargo test deadline exceeded"))?
+}
+
+#[cfg(unix)]
+struct ProcessGroup(libc::pid_t);
+
+#[cfg(unix)]
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        // SAFETY: a positive child PID was obtained directly after spawn, with
+        // process_group(0) making it the leader of a new group. A negative PID
+        // targets that group. ESRCH is harmless when all processes have exited.
+        unsafe { libc::kill(-self.0, libc::SIGKILL); }
+    }
+}
+
+#[cfg(not(unix))]
+pub(crate) async fn output(_command: Command, _limit: Duration) -> std::io::Result<Output> {
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "experimental real test execution requires Unix process-group support",
+    ))
 }
 
 #[cfg(all(test, unix))]
