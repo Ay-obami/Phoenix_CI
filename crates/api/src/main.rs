@@ -43,9 +43,19 @@ fn publish_to_github(agent_mode: bool) -> bool {
     agent_mode
 }
 
+fn required_submit_token(agent_mode: bool, value: Option<String>) -> Result<Option<Arc<str>>, std::io::Error> {
+    if !agent_mode { return Ok(None); }
+    let token = value.filter(|token| token.len() >= 32 && !token.chars().any(char::is_whitespace))
+        .ok_or_else(|| std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "real agent mode requires SWARM_API_TOKEN (at least 32 non-whitespace characters)",
+        ))?;
+    Ok(Some(Arc::<str>::from(token)))
+}
+
 #[cfg(test)]
 mod security_tests {
-    use super::require_host_execution_opt_in;
+    use super::{require_host_execution_opt_in, required_submit_token};
 
     #[test]
     fn real_agent_mode_fails_closed_without_exact_opt_in() {
@@ -59,6 +69,14 @@ mod security_tests {
     fn simulated_mode_never_starts_the_real_github_publisher() {
         assert!(!super::publish_to_github(false));
         assert!(super::publish_to_github(true));
+    }
+
+    #[test]
+    fn real_agent_mode_requires_a_long_submit_token() {
+        assert!(required_submit_token(true, None).is_err());
+        assert!(required_submit_token(true, Some("short".into())).is_err());
+        assert!(required_submit_token(true, Some("x".repeat(32))).is_ok());
+        assert!(required_submit_token(false, None).unwrap().is_none());
     }
 }
 
@@ -91,6 +109,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         agent_mode,
         std::env::var("SWARM_ALLOW_UNSANDBOXED_AGENT").ok().as_deref(),
     )?;
+    let submit_token = required_submit_token(agent_mode, std::env::var("SWARM_API_TOKEN").ok())?;
     if !agent_mode {
         tracing::warn!(
             "DEV MODE: merge gate accepts SIMULATED test reports (set LLM_PROVIDER=anthropic for the real gate)"
@@ -153,6 +172,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         supervisor,
         tasks: Arc::default(),
         spawner,
+        submit_token,
     };
 
     // Simulated reports can open the demo gate; never let them merge a real PR.

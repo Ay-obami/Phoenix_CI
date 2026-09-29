@@ -5,7 +5,6 @@
 //! claim. This is what the deterministic merge gate keys off.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 use swarm_core::events::TestOrigin;
@@ -135,7 +134,7 @@ impl ImplementerAgent {
                 let _span = tracing::info_span!("cargo_test").entered();
                 let started_at = std::time::Instant::now();
 
-                let out = Command::new("cargo")
+                let out = workspace::child_command("cargo")
                     .args(["test", "--quiet"])
                     .current_dir(&sandbox)
                     .output()

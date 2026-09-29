@@ -7,9 +7,9 @@
 //! PR's head branch (and proven by a real test run) before the gate opens, so
 //! merging here merges the verified code.
 
-use std::process::{Command, Stdio};
+use std::process::Stdio;
 
-use swarm_agents::workspace::{filesystem_repo, parse_github_pr, resolve_push_branch};
+use swarm_agents::workspace::{child_command, filesystem_repo, parse_github_pr, resolve_push_branch};
 use swarm_core::events::SwarmEvent;
 use swarm_core::task::TaskSpec;
 use swarm_supervisor::Supervisor;
@@ -75,7 +75,7 @@ fn merge_pr(spec: &TaskSpec) -> Result<Option<String>, String> {
 
 fn find_open_pr_number(repo: &str, r#ref: &str) -> Option<u64> {
     let branch = resolve_push_branch(&format!("https://github.com/{repo}.git"), r#ref)?;
-    let out = Command::new("gh")
+    let out = child_command("gh")
         .args(["pr", "list", "--state", "open", "--head", &branch, "--repo", repo, "--json", "number"])
         .stdin(Stdio::null())
         .output()
@@ -88,7 +88,7 @@ fn find_open_pr_number(repo: &str, r#ref: &str) -> Option<u64> {
 }
 
 fn gh_ok(args: &[&str]) -> bool {
-    let mut cmd = Command::new("gh");
+    let mut cmd = child_command("gh");
     cmd.stdin(Stdio::null());
     for a in args {
         cmd.arg(a);
