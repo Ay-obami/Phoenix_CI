@@ -82,10 +82,24 @@ mod tests {
     #[tokio::test]
     async fn deadline_stops_test_descendants() {
         let (command, started, marker) = fixture();
-        let result = output(command, Duration::from_millis(100)).await;
+        let worker = tokio::spawn(output(command, Duration::from_millis(500)));
+        ready(&started).await;
+        let result = worker.await.unwrap();
         assert_eq!(result.unwrap_err().kind(), std::io::ErrorKind::TimedOut);
         tokio::time::sleep(Duration::from_millis(1200)).await;
         assert!(!marker.exists(), "descendant executed after test deadline");
+        std::fs::remove_dir_all(started.parent().unwrap()).unwrap();
+    }
+
+    #[tokio::test]
+    async fn completed_command_stops_background_descendants() {
+        let (_, started, marker) = fixture();
+        let mut command = crate::workspace::child_command("sh");
+        command.args(["-c", "(sleep 1; touch \"$1\") >/dev/null 2>&1 & exit 0", "test"])
+            .arg(&marker);
+        assert!(output(command, Duration::from_secs(5)).await.unwrap().status.success());
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert!(!marker.exists(), "descendant executed after command completion");
         std::fs::remove_dir_all(started.parent().unwrap()).unwrap();
     }
 
