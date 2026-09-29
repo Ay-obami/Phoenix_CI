@@ -66,7 +66,8 @@ sleep 6    && curl -s localhost:3000/tasks/$TID            # reassigned + merged
 | `LLM_PROVIDER`     | no       | `mock`                         | `mock` \| `anthropic` (extensible, Phase 3)|
 | `ANTHROPIC_API_KEY`| yes if provider=anthropic | —              | API key for the Anthropic implementation   |
 | `ANTHROPIC_BASE_URL`| no      | `https://api.anthropic.com`    | Override for proxies/local gateways        |
-| `SWARM_BIND`       | no       | `0.0.0.0:3000`                 | API listen address                         |
+| `SWARM_BIND`       | no       | `127.0.0.1:3000`               | API listen address                         |
+| `SWARM_ALLOW_UNSANDBOXED_AGENT` | yes for a real LLM provider | — | Exact value `I_UNDERSTAND_HOST_EXECUTION` permits the experimental host runner |
 | `SWARM_HEARTBEAT_MS`| no      | `500`                          | Worker heartbeat interval                  |
 | `SWARM_LEASE_TIMEOUT_MS`| no  | `1500`                         | Lease expiry (≈3 missed heartbeats)        |
 | `SWARM_REAP_INTERVAL_MS`| no  | `250`                          | Supervisor lease-reaper scan cadence       |
@@ -83,6 +84,21 @@ sleep 6    && curl -s localhost:3000/tasks/$TID            # reassigned + merged
 Never commit API keys. Copy `.env.example` → `.env`, fill it in, and load it
 before running (`set -a; source .env; set +a`) — the binary reads plain
 environment variables.
+
+### Host execution boundary
+
+The current real-agent worker clones submitted repositories, runs `cargo test`
+on the host, and can use the host's GitHub credentials to push fixes and merge
+PRs. The per-attempt directory is a working copy, not a security sandbox.
+Simulated reports can open the demo gate, but the GitHub publisher is disabled
+in mock mode, so they cannot trigger a real PR merge.
+Real-agent mode now refuses to start unless an operator explicitly sets
+`SWARM_ALLOW_UNSANDBOXED_AGENT=I_UNDERSTAND_HOST_EXECUTION`. The API listens
+on loopback by default. Neither setting isolates untrusted code or adds API
+authentication; use this mode only on a disposable development machine with
+test credentials. A contained worker, resource limits, network restrictions,
+credential separation, authenticated intake and cancellation of child
+processes are required before hosting it for others.
 
 ## Solving real pull requests
 
@@ -114,7 +130,8 @@ planner produces a typed JSON plan, the implementer clones the PR head into a
 fresh per-attempt sandbox and runs **real `cargo test`**, and the gate opens
 ONLY for reports with provenance `real_cargo_test`. With `LLM_PROVIDER=mock`
 (no keys needed) everything stays offline: simulated implementers and a
-dev-mode gate that loudly warns it accepts simulated reports.
+dev-mode gate that loudly warns it accepts simulated reports; the real GitHub
+publisher stays disabled.
 
 
 

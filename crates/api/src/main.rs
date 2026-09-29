@@ -25,6 +25,43 @@ fn env_u64(key: &str, default: u64) -> u64 {
         .unwrap_or(default)
 }
 
+/// Agent mode currently runs fetched repository code through host Cargo.
+/// Require an unmistakable operator opt-in until a contained runner exists.
+fn require_host_execution_opt_in(agent_mode: bool, value: Option<&str>) -> Result<(), std::io::Error> {
+    if agent_mode && value != Some("I_UNDERSTAND_HOST_EXECUTION") {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "real agent mode executes submitted repository code on the host; set SWARM_ALLOW_UNSANDBOXED_AGENT=I_UNDERSTAND_HOST_EXECUTION only in an isolated development machine",
+        ));
+    }
+    Ok(())
+}
+
+/// A simulated merge gate is useful for the demo, but must never start the
+/// GitHub publisher that performs real `gh pr merge` calls.
+fn publish_to_github(agent_mode: bool) -> bool {
+    agent_mode
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::require_host_execution_opt_in;
+
+    #[test]
+    fn real_agent_mode_fails_closed_without_exact_opt_in() {
+        assert!(require_host_execution_opt_in(true, None).is_err());
+        assert!(require_host_execution_opt_in(true, Some("true")).is_err());
+        assert!(require_host_execution_opt_in(true, Some("I_UNDERSTAND_HOST_EXECUTION")).is_ok());
+        assert!(require_host_execution_opt_in(false, None).is_ok());
+    }
+
+    #[test]
+    fn simulated_mode_never_starts_the_real_github_publisher() {
+        assert!(!super::publish_to_github(false));
+        assert!(super::publish_to_github(true));
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
@@ -50,6 +87,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             false
         }
     };
+    require_host_execution_opt_in(
+        agent_mode,
+        std::env::var("SWARM_ALLOW_UNSANDBOXED_AGENT").ok().as_deref(),
+    )?;
     if !agent_mode {
         tracing::warn!(
             "DEV MODE: merge gate accepts SIMULATED test reports (set LLM_PROVIDER=anthropic for the real gate)"
@@ -114,16 +155,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         spawner,
     };
 
-    // GitHub publisher: best-effort automerges real PRs when their gates open.
-    let pub_sup = state.supervisor.clone();
-    let pub_state = state.clone();
-    tokio::spawn(async move {
-        swarm_api::publisher::run(pub_sup, pub_state.tasks).await;
-    });
+    // Simulated reports can open the demo gate; never let them merge a real PR.
+    if publish_to_github(agent_mode) {
+        let pub_sup = state.supervisor.clone();
+        let pub_state = state.clone();
+        tokio::spawn(async move {
+            swarm_api::publisher::run(pub_sup, pub_state.tasks).await;
+        });
+    }
 
     let app = swarm_api::router(state);
 
-    let addr = std::env::var("SWARM_BIND").unwrap_or_else(|_| "0.0.0.0:3000".into());
+    let addr = std::env::var("SWARM_BIND").unwrap_or_else(|_| "127.0.0.1:3000".into());
     let listener = tokio::net::TcpListener::bind(&addr).await?;
     tracing::info!(%addr, "swarm-ci api listening");
     axum::serve(listener, app).await?;
